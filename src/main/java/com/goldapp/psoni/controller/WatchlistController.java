@@ -72,7 +72,7 @@ public class WatchlistController {
      * GET /api/watchlist/{userId}/snapshot
      */
     @GetMapping("/{userId}/snapshot")
-    public ResponseEntity<List<TickData>> snapshot(@PathVariable String userId) {
+    public ResponseEntity<List<TickData>> snapshot(@PathVariable Long userId) {
         return ResponseEntity.ok(kiteTickerService.getSnapshotForUser(userId));
     }
 

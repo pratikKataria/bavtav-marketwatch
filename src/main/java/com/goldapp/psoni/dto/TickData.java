@@ -10,6 +10,9 @@ import java.time.Instant;
 @AllArgsConstructor
 public class TickData {
 
+    @JsonProperty("exchange")
+    private String exchange;
+
     @JsonProperty("instrumentToken")
     private long instrumentToken;
 
@@ -50,11 +53,12 @@ public class TickData {
     private long timestamp;
 
 
-    public TickData() {}
+    public TickData() {
+    }
 
     public TickData(long instrumentToken, String tradingSymbol, double lastPrice,
                     double open, double high, double low, double close,
-                    double volume, double buyQuantity, double sellQuantity) {
+                    double volume, double buyQuantity, double sellQuantity, String exchange) {
         this.instrumentToken = instrumentToken;
         this.tradingSymbol = tradingSymbol;
         this.lastPrice = lastPrice;
@@ -68,5 +72,6 @@ public class TickData {
         this.change = lastPrice - close;
         this.changePercent = close != 0 ? ((lastPrice - close) / close) * 100 : 0;
         this.timestamp = Instant.now().toEpochMilli();
+        this.exchange = exchange;
     }
 }

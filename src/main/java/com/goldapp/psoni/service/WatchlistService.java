@@ -6,6 +6,8 @@ import java.util.List;
 
 public interface WatchlistService {
 
+    List<Long> tokensForUser(long userId);
+
     void addSymbol(Long userId, Long instrumentId);
 
     void removeSymbol(Long userId, Long instrumentId);

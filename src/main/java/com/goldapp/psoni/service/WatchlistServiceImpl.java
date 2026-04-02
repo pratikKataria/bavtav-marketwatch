@@ -11,6 +11,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -108,13 +109,36 @@ public class WatchlistServiceImpl implements WatchlistService {
     private void refreshTickerWatchlist(Long userId) {
         try {
             List<UserWatchlist> list = watchlistRepository.findByUserIdOrderByDisplayOrderAsc(userId);
-            Set<Long> tokens = list.stream()
-                    .map(UserWatchlist::getInstrumentId)
-                    .map(id -> instrumentRepository.findById(id).get().getInstrumentToken())
-                    .collect(Collectors.toSet());
+            Set<Long> tokens = new HashSet<>();
+
+            for (UserWatchlist watch : list) {
+
+                Long instrumentId = watch.getInstrumentId();
+                System.out.println("InstrumentId: " + instrumentId);
+
+                InstrumentMaster instrument = instrumentRepository.findById(instrumentId)
+                        .orElseThrow(() -> new RuntimeException("Instrument not found: " + instrumentId));
+
+                Long token = instrument.getInstrumentToken();
+
+                System.out.println("InstrumentToken: " + token);
+
+                tokens.add(token);
+            }
+
+            System.out.println("Final Tokens Set: " + tokens);
             kiteTickerService.updateWatchlist(userId.toString(), tokens);
         } catch (Exception xe) {
             log.error("Unknown error occurred {}", xe.getLocalizedMessage());
         }
+    }
+
+
+    @Override
+    public List<Long> tokensForUser(long userId) {
+        return watchlistRepository.findByUserIdOrderByDisplayOrderAsc(userId)
+                .stream()
+                .map(UserWatchlist::getInstrumentId)
+                .toList();
     }
 }

@@ -1,7 +1,13 @@
 package com.goldapp.psoni.service;
 
+import com.goldapp.psoni.dto.InstrumentMeta;
 import com.goldapp.psoni.dto.TickData;
+import com.goldapp.psoni.entity.InstrumentMaster;
+import com.goldapp.psoni.entity.UserWatchlist;
 import com.goldapp.psoni.repository.InstrumentRepository;
+import com.goldapp.psoni.repository.UserWatchlistRepository;
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
 import com.zerodhatech.kiteconnect.kitehttp.exceptions.KiteException;
 import com.zerodhatech.models.Tick;
 import com.zerodhatech.ticker.KiteTicker;
@@ -44,10 +50,14 @@ public class KiteTickerService {
 
     // token → symbol name (e.g. 738561 → "NSE:INFY")
     // Populated lazily from InstrumentService
-    private final Map<Long, String> symbolCache = new ConcurrentHashMap<>();
+    private final Map<Long, InstrumentMeta> instrumentCache = new ConcurrentHashMap<>();
 
     // Last tick per token — snapshot for new page loads
     private final Map<Long, TickData> lastTickCache = new ConcurrentHashMap<>();
+
+    @Autowired
+    private UserWatchlistRepository watchlistRepository;
+
 
     // ── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -70,8 +80,8 @@ public class KiteTickerService {
      * Register or update a user's watchlist.
      * Automatically subscribes any new tokens to the Kite ticker.
      *
-     * @param userId   your app's user ID (String to match your auth model)
-     * @param tokens   full set of instrument tokens the user wants to watch
+     * @param userId your app's user ID (String to match your auth model)
+     * @param tokens full set of instrument tokens the user wants to watch
      */
     public void updateWatchlist(String userId, Set<Long> tokens) {
         userWatchlists.put(userId, new HashSet<>(tokens));
@@ -112,15 +122,32 @@ public class KiteTickerService {
         });
     }
 
+    private static final Gson GSON = new GsonBuilder()
+            .setDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSZ")   // nice ISO-8601 format
+            .serializeNulls()                              // keep nulls so nothing is hidden
+            .create();
+
     private TickData buildTickData(Tick tick) {
-        String symbol = symbolCache.computeIfAbsent(
+//        log.info("Full Tick payload → {}", GSON.toJson(tick));
+//        String symbol = symbolCache.computeIfAbsent(
+//                tick.getInstrumentToken(),
+//                token -> instrumentRepository.findByInstrumentToken(token).getSymbol()   // e.g. "NSE:INFY"
+//        );
+
+        InstrumentMeta meta = instrumentCache.computeIfAbsent(
                 tick.getInstrumentToken(),
-                token -> instrumentRepository.findByInstrumentToken(token).getSymbol()   // e.g. "NSE:INFY"
+                token -> {
+                    InstrumentMaster instrument = instrumentRepository.findByInstrumentToken(token);
+                    return new InstrumentMeta(
+                            instrument.getSymbol(),
+                            instrument.getExchange()
+                    );
+                }
         );
 
         return new TickData(
                 tick.getInstrumentToken(),
-                symbol,
+                meta.symbol(),
                 tick.getLastTradedPrice(),
                 tick.getOpenPrice(),
                 tick.getHighPrice(),
@@ -128,7 +155,8 @@ public class KiteTickerService {
                 tick.getClosePrice(),
                 tick.getLastTradedQuantity(),
                 tick.getTotalBuyQuantity(),
-                tick.getTotalSellQuantity()
+                tick.getTotalSellQuantity(),
+                meta.exchange()
         );
     }
 
@@ -139,8 +167,25 @@ public class KiteTickerService {
      * Call this from a REST endpoint so the page renders immediately
      * without waiting for the next tick arrival over WebSocket.
      */
-    public List<TickData> getSnapshotForUser(String userId) {
-        Set<Long> tokens = userWatchlists.getOrDefault(userId, Set.of());
+    public List<TickData> getSnapshotForUser(Long userId) {
+        List<UserWatchlist> list = watchlistRepository.findByUserIdOrderByDisplayOrderAsc(userId);
+        Set<Long> tokens = new HashSet<>();
+
+        for (UserWatchlist watch : list) {
+
+            Long instrumentId = watch.getInstrumentId();
+            System.out.println("InstrumentId: " + instrumentId);
+
+            InstrumentMaster instrument = instrumentRepository.findById(instrumentId)
+                    .orElseThrow(() -> new RuntimeException("Instrument not found: " + instrumentId));
+
+            Long token = instrument.getInstrumentToken();
+
+            System.out.println("InstrumentToken: " + token);
+
+            tokens.add(token);
+        }
+        updateWatchlist(userId.toString(), tokens);
         return tokens.stream()
                 .map(lastTickCache::get)
                 .collect(Collectors.toList());
@@ -157,10 +202,9 @@ public class KiteTickerService {
 
         ArrayList<Long> toSubscribe = new ArrayList<>(tokens);
         ticker.subscribe(toSubscribe);
-        ticker.setMode(toSubscribe, KiteTicker.modeLTP); // LTP is enough for a watchlist
+        ticker.setMode(toSubscribe, KiteTicker.modeFull); // LTP is enough for a watchlist
         log.debug("Ensured subscription for {} tokens", toSubscribe.size());
     }
-
 
 
     // ── KiteTicker connection ─────────────────────────────────────────────────
@@ -210,7 +254,7 @@ public class KiteTickerService {
             ticker.setOnTickerArrivalListener(new OnTicks() {
                 @Override
                 public void onTicks(ArrayList<Tick> ticks) {
-                    log.info("Received ticks: {}", ticks.size());
+//                    log.info("Received ticks: {}", ticks.size());
                     processTicks(ticks);
                 }
             });
