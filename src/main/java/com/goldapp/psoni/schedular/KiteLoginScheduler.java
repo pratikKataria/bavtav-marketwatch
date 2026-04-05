@@ -36,12 +36,17 @@ public class KiteLoginScheduler {
     }
 
     /**
-     * Cron: 01:30 UTC = 07:00 AM IST
-     * Runs Monday–Friday only (markets are closed weekends).
+     * Cron: 02:30 UTC = 08:00 AM IST
+     * Runs every day (including weekends).
      *
-     * To also run on Saturday for testing: replace "MON-FRI" with "*"
+     * WHY 8:00 AM IST:
+     *  - Zerodha flushes all access tokens at 7:30 AM IST daily.
+     *  - New tokens can only be safely generated AFTER 7:35 AM IST.
+     *  - NSE/BSE pre-open session starts at 9:00 AM IST (regular trading at 9:15 AM).
+     *  - 8:00 AM gives a comfortable ~25-minute buffer after the flush
+     *    and a ~60-minute runway before market pre-open.
      */
-    @Scheduled(cron = "0 30 1 * * MON-FRI", zone = "UTC")
+    @Scheduled(cron = "0 30 2 * * *", zone = "UTC")
     public void scheduledLogin() {
         log.info("=== Kite scheduled login started ===");
         attemptLoginWithRetry();
