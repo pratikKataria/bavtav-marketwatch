@@ -1,12 +1,15 @@
 package com.goldapp.psoni.service;
 
 import com.goldapp.psoni.entity.KiteSession;
+import com.goldapp.psoni.event.SessionRefreshedEvent;
 import com.goldapp.psoni.repository.KiteSessionRepository;
 import com.zerodhatech.kiteconnect.KiteConnect;
 import com.zerodhatech.ticker.KiteTicker;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDate;
@@ -43,6 +46,9 @@ public class KiteSessionManager {
     private String apiKey;
 
     private final KiteSessionRepository sessionRepository;
+
+    @Autowired
+    private ApplicationEventPublisher eventPublisher;
 
     // ── In-memory cache ───────────────────────────────────────────────────────
     private KiteConnect cachedKite;
@@ -94,6 +100,7 @@ public class KiteSessionManager {
         try {
             stopTickerInternal();   // tear down stale ticker before swapping token
             loadFromDb();
+            eventPublisher.publishEvent(new SessionRefreshedEvent(this));
             log.info("KiteSessionManager: in-memory cache refreshed from DB");
         } finally {
             lock.writeLock().unlock();

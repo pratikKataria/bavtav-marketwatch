@@ -1,3 +1,3 @@
 package com.goldapp.psoni.dto;
 
-public record InstrumentMeta(String symbol, String exchange) {}
+public record InstrumentMeta(String symbol, String exchange, Long id) {}

@@ -4,6 +4,7 @@ import com.goldapp.psoni.dto.InstrumentMeta;
 import com.goldapp.psoni.dto.TickData;
 import com.goldapp.psoni.entity.InstrumentMaster;
 import com.goldapp.psoni.entity.UserWatchlist;
+import com.goldapp.psoni.event.SessionRefreshedEvent;
 import com.goldapp.psoni.repository.InstrumentRepository;
 import com.goldapp.psoni.repository.UserWatchlistRepository;
 import com.google.gson.Gson;
@@ -26,6 +27,7 @@ import org.springframework.stereotype.Service;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
+import org.springframework.context.event.EventListener;
 
 @Service
 public class KiteTickerService {
@@ -140,7 +142,8 @@ public class KiteTickerService {
                     InstrumentMaster instrument = instrumentRepository.findByInstrumentToken(token);
                     return new InstrumentMeta(
                             instrument.getSymbol(),
-                            instrument.getExchange()
+                            instrument.getExchange(),
+                            instrument.getId()
                     );
                 }
         );
@@ -156,7 +159,8 @@ public class KiteTickerService {
                 tick.getLastTradedQuantity(),
                 tick.getTotalBuyQuantity(),
                 tick.getTotalSellQuantity(),
-                meta.exchange()
+                meta.exchange(),
+                meta.id()
         );
     }
 
@@ -268,4 +272,20 @@ public class KiteTickerService {
             log.error("Failed to initialize KiteTicker: {}", e.getMessage(), e);
         }
     }
+
+    public void reconnectTicker() {
+        log.info("Reconnecting KiteTicker with fresh session...");
+        connectTicker();   // wires all listeners onto the new ticker instance
+    }
+
+    @EventListener
+    public void onSessionRefreshed(SessionRefreshedEvent event) {
+        log.info("Session refreshed event received — reconnecting ticker");
+        instrumentCache.clear();
+        lastTickCache.clear();
+        userWatchlists.clear();
+        shutdown();
+        reconnectTicker();
+    }
+
 }

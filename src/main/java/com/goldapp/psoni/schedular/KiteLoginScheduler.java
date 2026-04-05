@@ -57,26 +57,34 @@ public class KiteLoginScheduler {
     }
 
     // ── Internal ──────────────────────────────────────────────────────────────
-
     private void attemptLoginWithRetry() {
         for (int attempt = 1; attempt <= MAX_RETRIES; attempt++) {
             try {
+                /* ---- FLUSH current in-memory session & any open WebSocket ---- */
+                sessionManager.invalidate();          // ❶ close ticker & clear cache
+
+                /* ---- fresh three-step login, persisted in DB ---- */
                 loginService.loginAndPersist();
-                sessionManager.refreshFromDb();
+
+                /* ---- rebuild in-memory objects from the new DB row ---- */
+                sessionManager.refreshFromDb();       // ❷ load new token & create KiteConnect
+
                 log.info("Kite login succeeded on attempt {}/{}", attempt, MAX_RETRIES);
                 return;
-            } catch (Exception e) {
+            }
+            catch (KiteException ke) {               // put the specific SDK exception first
+                log.error("KiteException during login: {}", ke.getMessage(), ke);
+            }
+            catch (Exception e) {
                 log.error("Kite login attempt {}/{} failed: {}", attempt, MAX_RETRIES, e.getMessage(), e);
+            }
 
-                if (attempt < MAX_RETRIES) {
-                    log.info("Retrying in {} minutes...", RETRY_DELAY_MS / 60000);
-                    sleep(RETRY_DELAY_MS);
-                } else {
-                    log.error("All {} login attempts exhausted. " +
-                              "Manual intervention required — POST /api/admin/kite/relogin", MAX_RETRIES);
-                }
-            } catch (KiteException e) {
-                throw new RuntimeException(e);
+            /* ---- retry handler ---- */
+            if (attempt < MAX_RETRIES) {
+                log.info("Retrying in {} minutes...", RETRY_DELAY_MS / 60_000);
+                sleep(RETRY_DELAY_MS);
+            } else {
+                log.error("All {} login attempts exhausted — manual POST /api/admin/kite/relogin required", MAX_RETRIES);
             }
         }
     }
