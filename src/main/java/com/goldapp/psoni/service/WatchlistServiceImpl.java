@@ -1,5 +1,6 @@
 package com.goldapp.psoni.service;
 
+import com.goldapp.psoni.dto.TickData;
 import com.goldapp.psoni.dto.WatchlistItemDto;
 import com.goldapp.psoni.entity.InstrumentMaster;
 import com.goldapp.psoni.entity.UserWatchlist;
@@ -11,10 +12,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -25,7 +23,6 @@ public class WatchlistServiceImpl implements WatchlistService {
     private final UserWatchlistRepository watchlistRepository;
     private final InstrumentRepository instrumentRepository;
     private final KiteMarketService kiteMarketService;
-    private final MarketService marketService;
     private final KiteTickerService kiteTickerService;
 
     @Override
@@ -63,47 +60,36 @@ public class WatchlistServiceImpl implements WatchlistService {
     }
 
     @Override
-    public List<WatchlistItemDto> getWatchlist(Long userId) throws Exception {
+    public List<TickData> getWatchlist(Long userId) throws Exception {
 
         List<UserWatchlist> watchlist = watchlistRepository.findByUserIdOrderByDisplayOrderAsc(userId);
 
         if (watchlist.isEmpty()) {
-            return marketService.getDefaultMarketSymbols().stream().map(
-                    item -> {
-                        return WatchlistItemDto.builder()
-                                .instrumentId(item.getId())
-                                .symbol(item.getSymbol())
-                                .exchange(item.getExchange())
-                                .ltp(item.getLtp())
-                                .change(item.getChange())
-                                .changePercent(null)
-                                .build();
-                    }
-            ).toList();
+            return new ArrayList<>();
         }
 
         List<String> kiteSymbols = watchlist.stream()
                 .map(w -> w.getExchange() + ":" + w.getSymbol())
                 .toList();
 
-        Map<String, Quote> quotes = kiteMarketService.getQuotes(kiteSymbols);
+        List<TickData> quotes = kiteMarketService.getTickData(kiteSymbols);
+        return quotes;
+    }
 
-        return watchlist.stream().map(item -> {
+    @Override
+    public List<TickData> getDefaultWatchList() throws Exception {
+        List<InstrumentMaster> instruments = instrumentRepository.findByDefaultSymbolTrue();
 
-            String key = item.getExchange() + ":" + item.getSymbol();
+        if (instruments.isEmpty()) {
+            return new ArrayList<>();
+        }
 
-            Quote quote = quotes.get(key);
+        List<String> kiteSymbols = instruments.stream()
+                .map(i -> i.getExchange() + ":" + i.getSymbol())
+                .toList();
 
-            return WatchlistItemDto.builder()
-                    .instrumentId(item.getInstrumentId())
-                    .symbol(item.getSymbol())
-                    .exchange(item.getExchange())
-                    .ltp(quote != null ? quote.lastPrice : null)
-                    .change(quote != null ? quote.change : null)
-                    .changePercent(null)
-                    .build();
 
-        }).toList();
+        return kiteMarketService.getTickData(kiteSymbols);
     }
 
     private void refreshTickerWatchlist(Long userId) {
@@ -132,7 +118,6 @@ public class WatchlistServiceImpl implements WatchlistService {
             log.error("Unknown error occurred {}", xe.getLocalizedMessage());
         }
     }
-
 
     @Override
     public List<Long> tokensForUser(long userId) {

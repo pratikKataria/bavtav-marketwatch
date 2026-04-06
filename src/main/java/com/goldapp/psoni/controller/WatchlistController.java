@@ -41,9 +41,18 @@ public class WatchlistController {
     }
 
     @GetMapping
-    public ResponseEntity<List<WatchlistItemDto>> getWatchlist(@RequestHeader("userId") Long userId) {
+    public ResponseEntity<List<TickData>> getWatchlist(@RequestHeader("userId") Long userId) {
         try {
             return ResponseEntity.ok(watchlistService.getWatchlist(userId));
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    @GetMapping("/default")
+    public ResponseEntity<List<TickData>> getWatchlist() {
+        try {
+            return ResponseEntity.ok(watchlistService.getDefaultWatchList());
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
