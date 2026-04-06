@@ -41,25 +41,16 @@ public class KiteTickerService {
     private KiteSessionManager kiteSessionManager;
 
     @Autowired
-    private InstrumentRepository instrumentRepository; // resolves token → symbol
-
-    private KiteTicker ticker;
-
-    // ── Per-user watchlist registry ───────────────────────────────────────────
-    // userId → set of instrument tokens they are watching
-    // ConcurrentHashMap so watchlist updates from REST calls are thread-safe
-    private final Map<String, Set<Long>> userWatchlists = new ConcurrentHashMap<>();
-
-    // token → symbol name (e.g. 738561 → "NSE:INFY")
-    // Populated lazily from InstrumentService
-    private final Map<Long, InstrumentMeta> instrumentCache = new ConcurrentHashMap<>();
-
-    // Last tick per token — snapshot for new page loads
-    private final Map<Long, TickData> lastTickCache = new ConcurrentHashMap<>();
+    private InstrumentRepository instrumentRepository;
 
     @Autowired
     private UserWatchlistRepository watchlistRepository;
 
+    private KiteTicker ticker;
+
+    private final Map<String, Set<Long>> userWatchlists = new ConcurrentHashMap<>();
+    private final Map<Long, InstrumentMeta> instrumentCache = new ConcurrentHashMap<>();
+    private final Map<Long, TickData> lastTickCache = new ConcurrentHashMap<>();
 
     // ── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -70,30 +61,28 @@ public class KiteTickerService {
 
     @PreDestroy
     public void shutdown() {
-        if (ticker != null && ticker.isConnectionOpen()) {
-            ticker.disconnect();
-            log.info("KiteTicker disconnected on shutdown");
+        if (ticker != null) {
+            try {
+                if (ticker.isConnectionOpen()) {
+                    ticker.disconnect();
+                    log.info("KiteTicker disconnected on shutdown");
+                }
+            } catch (Exception e) {
+                log.warn("Error during ticker disconnect: {}", e.getMessage());
+            } finally {
+                ticker = null; // FIX: always null out so stale instance is never reused
+            }
         }
     }
 
-    // ── Watchlist management (called from your WatchlistController) ───────────
+    // ── Watchlist management ──────────────────────────────────────────────────
 
-    /**
-     * Register or update a user's watchlist.
-     * Automatically subscribes any new tokens to the Kite ticker.
-     *
-     * @param userId your app's user ID (String to match your auth model)
-     * @param tokens full set of instrument tokens the user wants to watch
-     */
     public void updateWatchlist(String userId, Set<Long> tokens) {
         userWatchlists.put(userId, new HashSet<>(tokens));
         ensureSubscribed(tokens);
         log.info("Watchlist updated for user {}: {} tokens", userId, tokens.size());
     }
 
-    /**
-     * Call this when a user logs out or disconnects their WebSocket.
-     */
     public void removeWatchlist(String userId) {
         userWatchlists.remove(userId);
         log.info("Watchlist removed for user {}", userId);
@@ -102,114 +91,132 @@ public class KiteTickerService {
     // ── Tick processing ───────────────────────────────────────────────────────
 
     private void processTicks(ArrayList<Tick> ticks) {
-        // Index incoming ticks by token — O(1) lookup instead of O(N) scan per user
         Map<Long, Tick> tickIndex = ticks.stream()
                 .collect(Collectors.toMap(Tick::getInstrumentToken, t -> t, (a, b) -> b));
 
-        // Update last-tick snapshot cache
-        tickIndex.forEach((token, tick) ->
-                lastTickCache.put(token, buildTickData(tick)));
+        tickIndex.forEach((token, tick) -> {
+            TickData td = buildTickData(tick);
+            if (td != null) { // FIX: guard against null from buildTickData
+                lastTickCache.put(token, td);
+            }
+        });
 
-        // Push to each user only the symbols in their watchlist
         userWatchlists.forEach((userId, watchedTokens) -> {
             List<TickData> payload = watchedTokens.stream()
-                    .filter(tickIndex::containsKey)           // only tokens that ticked this cycle
+                    .filter(tickIndex::containsKey)
                     .map(token -> buildTickData(tickIndex.get(token)))
+                    .filter(Objects::nonNull) // FIX: drop any null tick entries
                     .collect(Collectors.toList());
 
             if (!payload.isEmpty()) {
-                // ONE message per user, containing ALL their ticked symbols
                 messagingTemplate.convertAndSend("/topic/watchlist/" + userId, payload);
             }
         });
     }
 
-    private static final Gson GSON = new GsonBuilder()
-            .setDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSZ")   // nice ISO-8601 format
-            .serializeNulls()                              // keep nulls so nothing is hidden
-            .create();
-
     private TickData buildTickData(Tick tick) {
-//        log.info("Full Tick payload → {}", GSON.toJson(tick));
-//        String symbol = symbolCache.computeIfAbsent(
-//                tick.getInstrumentToken(),
-//                token -> instrumentRepository.findByInstrumentToken(token).getSymbol()   // e.g. "NSE:INFY"
-//        );
+        if (tick == null) return null;
 
-        InstrumentMeta meta = instrumentCache.computeIfAbsent(
-                tick.getInstrumentToken(),
-                token -> {
-                    InstrumentMaster instrument = instrumentRepository.findByInstrumentToken(token);
-                    return new InstrumentMeta(
-                            instrument.getSymbol(),
-                            instrument.getExchange(),
-                            instrument.getId()
-                    );
-                }
-        );
+        try {
+            InstrumentMeta meta = instrumentCache.computeIfAbsent(
+                    tick.getInstrumentToken(),
+                    token -> {
+                        // FIX: null-safe DB lookup
+                        InstrumentMaster instrument = instrumentRepository.findByInstrumentToken(token);
+                        if (instrument == null) {
+                            log.warn("No instrument found for token {}, skipping", token);
+                            return null;
+                        }
+                        return new InstrumentMeta(
+                                instrument.getSymbol(),
+                                instrument.getExchange(),
+                                instrument.getId()
+                        );
+                    }
+            );
 
-        return new TickData(
-                tick.getInstrumentToken(),
-                meta.symbol(),
-                tick.getLastTradedPrice(),
-                tick.getOpenPrice(),
-                tick.getHighPrice(),
-                tick.getLowPrice(),
-                tick.getClosePrice(),
-                tick.getLastTradedQuantity(),
-                tick.getTotalBuyQuantity(),
-                tick.getTotalSellQuantity(),
-                meta.exchange(),
-                meta.id()
-        );
+            // FIX: if meta is null (unknown token), skip this tick entirely
+            if (meta == null) {
+                instrumentCache.remove(tick.getInstrumentToken()); // don't cache the null
+                return null;
+            }
+
+            return new TickData(
+                    tick.getInstrumentToken(),
+                    meta.symbol(),
+                    tick.getLastTradedPrice(),
+                    tick.getOpenPrice(),
+                    tick.getHighPrice(),
+                    tick.getLowPrice(),
+                    tick.getClosePrice(),
+                    tick.getLastTradedQuantity(),
+                    tick.getTotalBuyQuantity(),
+                    tick.getTotalSellQuantity(),
+                    meta.exchange(),
+                    meta.id()
+            );
+        } catch (Exception e) {
+            log.error("Failed to build TickData for token {}: {}", tick.getInstrumentToken(), e.getMessage());
+            return null;
+        }
     }
 
-    // ── Snapshot endpoint support ─────────────────────────────────────────────
+    // ── Snapshot endpoint ─────────────────────────────────────────────────────
 
-    /**
-     * Returns last known ticks for a user's watchlist.
-     * Call this from a REST endpoint so the page renders immediately
-     * without waiting for the next tick arrival over WebSocket.
-     */
     public List<TickData> getSnapshotForUser(Long userId) {
         List<UserWatchlist> list = watchlistRepository.findByUserIdOrderByDisplayOrderAsc(userId);
         Set<Long> tokens = new HashSet<>();
 
         for (UserWatchlist watch : list) {
-
             Long instrumentId = watch.getInstrumentId();
-            System.out.println("InstrumentId: " + instrumentId);
-
             InstrumentMaster instrument = instrumentRepository.findById(instrumentId)
-                    .orElseThrow(() -> new RuntimeException("Instrument not found: " + instrumentId));
+                    .orElse(null);
+
+            if (instrument == null) {
+                log.warn("Instrument not found for id {}, skipping", instrumentId);
+                continue; // FIX: skip missing instruments instead of throwing
+            }
 
             Long token = instrument.getInstrumentToken();
-
-            System.out.println("InstrumentToken: " + token);
-
             tokens.add(token);
+
+            // FIX: warm the instrumentCache eagerly so buildTickData never hits DB cold
+            instrumentCache.computeIfAbsent(token, t ->
+                    new InstrumentMeta(
+                            instrument.getSymbol(),
+                            instrument.getExchange(),
+                            instrument.getId()
+                    )
+            );
         }
+
         updateWatchlist(userId.toString(), tokens);
-        return tokens.stream()
+
+        // FIX: filter out nulls — tokens with no ticks yet return null from lastTickCache
+        List<TickData> snapshot = tokens.stream()
                 .map(lastTickCache::get)
+                .filter(Objects::nonNull)
                 .collect(Collectors.toList());
+
+        log.info("Snapshot for user {}: {}/{} tokens have cached ticks",
+                userId, snapshot.size(), tokens.size());
+
+        return snapshot;
     }
 
-    // ── Ticker subscription management ───────────────────────────────────────
+    // ── Subscription management ───────────────────────────────────────────────
 
-    /**
-     * Subscribe any tokens not yet tracked by the Kite ticker.
-     * Safe to call repeatedly — Kite SDK ignores already-subscribed tokens.
-     */
     private void ensureSubscribed(Set<Long> tokens) {
-        if (ticker == null || !ticker.isConnectionOpen()) return;
+        if (ticker == null || !ticker.isConnectionOpen()) {
+            log.warn("ensureSubscribed called but ticker is not connected — tokens will be subscribed on next connect");
+            return;
+        }
 
         ArrayList<Long> toSubscribe = new ArrayList<>(tokens);
         ticker.subscribe(toSubscribe);
-        ticker.setMode(toSubscribe, KiteTicker.modeFull); // LTP is enough for a watchlist
+        ticker.setMode(toSubscribe, KiteTicker.modeFull);
         log.debug("Ensured subscription for {} tokens", toSubscribe.size());
     }
-
 
     // ── KiteTicker connection ─────────────────────────────────────────────────
 
@@ -221,12 +228,15 @@ public class KiteTickerService {
                 @Override
                 public void onConnected() {
                     log.info("KiteTicker connected");
-                    // Re-subscribe all current watchlist tokens on reconnect
+                    // FIX: re-subscribe ALL current watchlist tokens on every connect/reconnect
                     Set<Long> allTokens = userWatchlists.values().stream()
                             .flatMap(Collection::stream)
                             .collect(Collectors.toSet());
                     if (!allTokens.isEmpty()) {
                         ensureSubscribed(allTokens);
+                        log.info("Re-subscribed {} tokens on connect", allTokens.size());
+                    } else {
+                        log.info("No tokens to re-subscribe on connect");
                     }
                 }
             });
@@ -258,7 +268,6 @@ public class KiteTickerService {
             ticker.setOnTickerArrivalListener(new OnTicks() {
                 @Override
                 public void onTicks(ArrayList<Tick> ticks) {
-//                    log.info("Received ticks: {}", ticks.size());
                     processTicks(ticks);
                 }
             });
@@ -270,12 +279,13 @@ public class KiteTickerService {
 
         } catch (Exception | KiteException e) {
             log.error("Failed to initialize KiteTicker: {}", e.getMessage(), e);
+            ticker = null; // FIX: null out on failure so shutdown() doesn't reference a bad instance
         }
     }
 
     public void reconnectTicker() {
         log.info("Reconnecting KiteTicker with fresh session...");
-        connectTicker();   // wires all listeners onto the new ticker instance
+        connectTicker();
     }
 
     @EventListener
@@ -283,9 +293,9 @@ public class KiteTickerService {
         log.info("Session refreshed event received — reconnecting ticker");
         instrumentCache.clear();
         lastTickCache.clear();
-        userWatchlists.clear();
+        // FIX: do NOT clear userWatchlists here — we need them in onConnected
+        // to re-subscribe tokens after the new ticker connects
         shutdown();
         reconnectTicker();
     }
-
 }
