@@ -1,6 +1,7 @@
 package com.goldapp.psoni.repository;
 
 import com.goldapp.psoni.entity.KiteSession;
+import jakarta.transaction.Transactional;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -17,6 +18,7 @@ public interface KiteSessionRepository extends JpaRepository<KiteSession, Long> 
 
     /** Deactivate all previous sessions before inserting a fresh one */
     @Modifying
+    @Transactional
     @Query("UPDATE KiteSession s SET s.active = false WHERE s.active = true")
     void deactivateAllSessions();
 }
