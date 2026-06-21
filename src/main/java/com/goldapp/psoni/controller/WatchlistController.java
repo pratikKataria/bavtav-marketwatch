@@ -61,7 +61,7 @@ public class WatchlistController {
     /**
      * Called when user adds or removes symbols from their watchlist.
      * Send the FULL current set of tokens (not a diff).
-     *
+     * <p>
      * PUT /api/watchlist/{userId}
      * Body: [738561, 408065, 884737]
      */
@@ -77,7 +77,7 @@ public class WatchlistController {
     /**
      * Returns last known prices for a user's watchlist.
      * Call this on page load so the table isn't empty while waiting for ticks.
-     *
+     * <p>
      * GET /api/watchlist/{userId}/snapshot
      */
     @GetMapping("/{userId}/snapshot")

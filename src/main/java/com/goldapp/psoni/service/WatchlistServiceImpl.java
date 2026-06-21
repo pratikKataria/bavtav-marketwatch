@@ -73,8 +73,29 @@ public class WatchlistServiceImpl implements WatchlistService {
                 .toList();
 
         List<TickData> quotes = kiteMarketService.getTickData(kiteSymbols);
+        enrichWithInstrumentToken(quotes, watchlist);
         return quotes;
     }
+
+
+    private List<TickData> enrichWithInstrumentToken(List<TickData> ticks, List<UserWatchlist> watchlist) {
+
+        Map<String, Long> tokenMap = watchlist.stream()
+                .collect(Collectors.toMap(
+                        w -> w.getExchange() + ":" + w.getSymbol(),
+                        UserWatchlist::getInstrumentId
+                ));
+
+        ticks.forEach(tick -> {
+            Long token = tokenMap.get(tick.getExchange() + ":" + tick.getTradingSymbol());
+            if (token != null) {
+                tick.setInstrumentToken(token);
+            }
+        });
+
+        return ticks;
+    }
+
 
     @Override
     public List<TickData> getDefaultWatchList() throws Exception {

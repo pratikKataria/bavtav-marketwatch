@@ -16,7 +16,11 @@ public class InstrumentSearchServiceImpl implements InstrumentSearchService {
 
     @Override
     public List<InstrumentSearchDto> search(String exchange, String query, Long userId) {
-        List<InstrumentSearchDto> rows = instrumentRepository.searchInstruments(exchange, query, userId);
-        return rows;
+        if (exchange.equalsIgnoreCase("international")) {
+            return instrumentRepository.searchInstrumentsInternational(query, userId);
+
+        } else {
+            return instrumentRepository.searchInstruments(exchange, query, userId);
+        }
     }
 }

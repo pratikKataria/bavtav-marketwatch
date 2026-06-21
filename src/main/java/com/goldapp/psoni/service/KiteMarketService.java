@@ -49,15 +49,34 @@ public class KiteMarketService {
 
             List<TickData> ticks = new ArrayList<>();
 
-            for (Map.Entry<String, Quote> entry : quotes.entrySet()) {
+            for (String instrument : instruments) {
 
-                String instrument = entry.getKey();
-                Quote quote = entry.getValue();
-
-                long instrumentToken = quote.instrumentToken;
+                Quote quote = quotes.get(instrument);
 
                 String tradingSymbol = instrument.split(":")[1];
                 String exchange = instrument.split(":")[0];
+
+                if (quote == null) {
+                    // Default tick with zero/false values for missing instruments
+                    TickData defaultTick = new TickData(
+                            0L,
+                            tradingSymbol,
+                            0.0,
+                            0.0,
+                            0.0,
+                            0.0,
+                            0.0,
+                            0L,
+                            0.0,
+                            0.0,
+                            exchange,
+                            null
+                    );
+                    ticks.add(defaultTick);
+                    continue;
+                }
+
+                long instrumentToken = quote.instrumentToken;
 
                 double buyQty = 0;
                 double sellQty = 0;
