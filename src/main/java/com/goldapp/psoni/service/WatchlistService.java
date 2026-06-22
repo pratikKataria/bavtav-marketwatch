@@ -13,7 +13,7 @@ public interface WatchlistService {
 
     void removeSymbol(Long userId, Long instrumentId);
 
-    List<TickData> getWatchlist(Long userId) throws Exception;
+    List<WatchlistItemDto> getWatchlist(Long userId) throws Exception;
 
     List<TickData> getDefaultWatchList() throws Exception;
 }

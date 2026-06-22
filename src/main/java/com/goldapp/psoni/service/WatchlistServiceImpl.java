@@ -6,7 +6,6 @@ import com.goldapp.psoni.entity.InstrumentMaster;
 import com.goldapp.psoni.entity.UserWatchlist;
 import com.goldapp.psoni.repository.InstrumentRepository;
 import com.goldapp.psoni.repository.UserWatchlistRepository;
-import com.zerodhatech.models.Quote;
 import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -60,23 +59,46 @@ public class WatchlistServiceImpl implements WatchlistService {
     }
 
     @Override
-    public List<TickData> getWatchlist(Long userId) throws Exception {
+    public List<WatchlistItemDto> getWatchlist(Long userId) throws Exception {
 
-        List<UserWatchlist> watchlist = watchlistRepository.findByUserIdOrderByDisplayOrderAsc(userId);
+        List<Object[]> rows = watchlistRepository.findWatchlistWithInstrumentByUserId(userId);
 
-        if (watchlist.isEmpty()) {
-            return new ArrayList<>();
+        if (rows.isEmpty()) return new ArrayList<>();
+
+        List<String> kiteSymbols = new ArrayList<>();
+        Map<String, InstrumentMaster> instrumentMap = new HashMap<>();
+
+        for (Object[] row : rows) {
+            UserWatchlist uw = (UserWatchlist) row[0];
+            InstrumentMaster im = (InstrumentMaster) row[1];
+            String key = im.getExchange() + ":" + im.getSymbol();
+            kiteSymbols.add(key);
+            instrumentMap.put(key, im);
         }
 
-        List<String> kiteSymbols = watchlist.stream()
-                .map(w -> w.getExchange() + ":" + w.getSymbol())
-                .toList();
+        List<TickData> ticks = kiteMarketService.getTickData(kiteSymbols);
 
-        List<TickData> quotes = kiteMarketService.getTickData(kiteSymbols);
-        enrichWithInstrumentToken(quotes, watchlist);
-        return quotes;
+        return ticks.stream().map(tick -> {
+            String key = tick.getExchange() + ":" + tick.getTradingSymbol();
+            InstrumentMaster im = instrumentMap.get(key);
+
+            WatchlistItemDto dto = WatchlistItemDto.from(tick);
+
+            if (im != null) {
+                dto.setId(im.getId());
+                dto.setName(im.getName());
+                dto.setInstrumentType(im.getInstrumentType());
+                dto.setSegment(im.getSegment());
+                dto.setExpiryDate(im.getExpiryDate());
+                dto.setStrikePrice(im.getStrikePrice());
+                dto.setTickSize(im.getTickSize());
+                dto.setLotSize(im.getLotSize());
+                dto.setExchangeToken(im.getExchangeToken());
+            }
+
+            return dto;
+        }).toList();
     }
-
 
     private List<TickData> enrichWithInstrumentToken(List<TickData> ticks, List<UserWatchlist> watchlist) {
 
@@ -90,6 +112,10 @@ public class WatchlistServiceImpl implements WatchlistService {
             Long token = tokenMap.get(tick.getExchange() + ":" + tick.getTradingSymbol());
             if (token != null) {
                 tick.setInstrumentToken(token);
+            }
+
+            if (tick.getId() == null) {
+                tick.setId(token);
             }
         });
 
