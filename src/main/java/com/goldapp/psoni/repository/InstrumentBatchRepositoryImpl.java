@@ -35,7 +35,6 @@ public class InstrumentBatchRepositoryImpl implements InstrumentBatchRepository 
                         ? AS tick_size,
                         ? AS lot_size,
                         ? AS segment,
-                        ? AS active,
                       CAST(? AS TIMESTAMP) AS created_on,
                       CAST(? AS TIMESTAMP) AS updated_on,
                         ? AS default_symbol
@@ -51,7 +50,6 @@ public class InstrumentBatchRepositoryImpl implements InstrumentBatchRepository 
                     tick_size = source.tick_size,
                     lot_size = source.lot_size,
                     segment = source.segment,
-                    active = source.active,
                     updated_on = source.updated_on,
                     default_symbol = source.default_symbol
                 WHEN NOT MATCHED THEN INSERT (
@@ -82,7 +80,7 @@ public class InstrumentBatchRepositoryImpl implements InstrumentBatchRepository 
                     source.tick_size,
                     source.lot_size,
                     source.segment,
-                    source.active,
+                    false,
                     source.created_on,
                     source.updated_on,
                     source.default_symbol
@@ -103,10 +101,9 @@ public class InstrumentBatchRepositoryImpl implements InstrumentBatchRepository 
             ps.setBigDecimal(9, dto.getTickSize());
             ps.setObject(10, dto.getLotSize());
             ps.setString(11, dto.getSegment());
-            ps.setBoolean(12, true);
+            ps.setTimestamp(12, Timestamp.valueOf(now));
             ps.setTimestamp(13, Timestamp.valueOf(now));
-            ps.setTimestamp(14, Timestamp.valueOf(now));
-            ps.setBoolean(15, Boolean.FALSE);
+            ps.setBoolean(14, Boolean.FALSE);
         });
 
         int total = 0;
