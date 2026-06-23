@@ -18,9 +18,8 @@ public interface UserWatchlistRepository extends JpaRepository<UserWatchlist, Lo
 
     @Modifying(clearAutomatically = true)
     @Transactional
-    @Query("DELETE FROM Trade t WHERE t.user.id = :userId AND t.instrument.id = :instrumentId")
-    void deleteByUserIdAndInstrumentId(@Param("userId") Long userId, @Param("instrumental") Long instrumentId);
-
+    @Query("DELETE FROM UserWatchlist uw WHERE uw.userId = :userId AND uw.instrumentId = :instrumentId")
+    void deleteByUserIdAndInstrumentId(@Param("userId") Long userId, @Param("instrumentId") Long instrumentId);
 
     @Query("""
             SELECT uw, im
